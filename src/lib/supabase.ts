@@ -1,13 +1,22 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+// Lazy singleton — not initialized at module load time so Vercel's
+// build-time static analysis doesn't throw when env vars are absent.
+let _supabase: ReturnType<typeof createClient> | null = null;
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export function getSupabaseClient() {
+  if (!_supabase) {
+    _supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+  }
+  return _supabase;
+}
 
-// Server-side client
-// For the demo deployment the anon key is used with open RLS policies.
-// In production, replace NEXT_PUBLIC_SUPABASE_ANON_KEY with SUPABASE_SERVICE_ROLE_KEY here.
+// Server-side client (API routes only)
+// Uses anon key for demo — open RLS policies allow all operations.
+// In production swap in SUPABASE_SERVICE_ROLE_KEY.
 export function createServiceClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
