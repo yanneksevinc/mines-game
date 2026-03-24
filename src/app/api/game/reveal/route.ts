@@ -17,13 +17,13 @@ export async function POST(req: NextRequest) {
 
     if (isMine) {
       if (session.shield_active) {
+        // Shield buff fires and absorbs the mine hit.
         // Penalty scales with mine density: fewer mines = shield was worth more = bigger cut.
         // e.g. 1 mine / 25 tiles (4% density) -> retain 40% of multiplier
         //      high mine count (30% density)  -> retain 85% of multiplier
         const retainFactor = shieldPenaltyFactor(session.mine_count, session.grid_size);
         const penalisedMultiplier = session.current_multiplier * retainFactor;
-        // Shield can only reduce the multiplier, but clamp for completeness and
-        // to guard against any future code paths that could inflate it here.
+        // Clamp for safety (shield can only reduce, but guard against future regressions).
         const clampedPenalisedMultiplier = clampMultiplierToRTP(
           penalisedMultiplier,
           session.grid_size,
@@ -37,9 +37,13 @@ export async function POST(req: NextRequest) {
           current_multiplier: clampedPenalisedMultiplier,
         }).eq('id', sessionId);
 
+        // Return 'shield-blocked' — NOT 'shield'.
+        // 'shield' means a shield TILE was picked up (grants the buff).
+        // 'shield-blocked' means the buff FIRED and absorbed a mine hit.
+        // The frontend must not add 'shield-blocked' to specialTilesFound.
         return NextResponse.json({
           phase: 'active',
-          tileState: 'shield',
+          tileState: 'shield-blocked',
           message: `\ud83d\udee1\ufe0f Shield blocked the mine! (-${penaltyPct}% multiplier penalty)`,
           sessionUpdate: { shieldActive: false, currentMultiplier: clampedPenalisedMultiplier },
         });
@@ -53,14 +57,13 @@ export async function POST(req: NextRequest) {
     const rawMultiplier = getMultiplier(session.grid_size, session.mine_count, newRevealedSafe, session.house_edge);
 
     // applySpecialTileEffect can boost the multiplier (gold \xd72, booster \xd71.25, mystery \xd71.5).
-    // Without clamping, those boosts produce RTP >> 99%.
     // Always clamp against session.mine_count (original), NOT newMinePositions.length, so that
     // a Defuser tile cannot widen the RTP envelope by reducing the apparent mine count.
     const { multiplier: adjustedMultiplier, message, newMinePositions } = applySpecialTileEffect(rawMultiplier, special?.type ?? null, minePositions);
     const clampedMultiplier = clampMultiplierToRTP(
       adjustedMultiplier,
       session.grid_size,
-      session.mine_count,   // original mine count — intentional, see above
+      session.mine_count,   // original mine count — intentional
       newRevealedSafe,
     );
     const newShieldActive = special?.type === 'shield' ? true : session.shield_active;
