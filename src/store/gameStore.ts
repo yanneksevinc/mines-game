@@ -26,6 +26,11 @@ interface GameStore {
   resetGame: () => void;
 }
 
+// Tile types that represent actual collectible special tile pickups.
+// 'shield-blocked' is intentionally excluded: it is the shield BUFF firing
+// (absorbing a mine hit), not a tile being picked up.
+const SPECIAL_PICKUP_TYPES = ['gold', 'shield', 'booster', 'defuse', 'mystery'] as const;
+
 export const useGameStore = create<GameStore>((set, get) => ({
   session: null,
   phase: 'idle',
@@ -128,11 +133,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return;
     }
 
-    const specialTypes = ['gold', 'shield', 'booster', 'defuse', 'mystery'];
+    // shield-blocked: the shield buff fired and absorbed a mine hit.
+    // This is NOT a tile pickup — do NOT add it to specialTilesFound.
+    if (data.tileState === 'shield-blocked') {
+      log.info('revealTile: shield blocked a mine hit', {
+        tile: index,
+        multiplierAfterPenalty: sessionUpdate?.currentMultiplier,
+        message: data.message,
+      });
+      const updatedSession: GameSession = { ...session, ...sessionUpdate, specialTilesFound: session.specialTilesFound ?? [] };
+      set({ tiles: newTiles, session: updatedSession, lastMessage: (data.message as string) ?? '' });
+
+      if (autoCashout && (updatedSession.currentMultiplier ?? 0) >= autoCashout) {
+        log.info(`revealTile: auto-cashout triggered at ${updatedSession.currentMultiplier?.toFixed(3)}x (threshold: ${autoCashout}x)`);
+        get().cashOut();
+      }
+      return;
+    }
+
+    // Only genuine tile pickups are tracked in specialTilesFound.
     const newSpecialsFound: SpecialTileStat[] = [...(session.specialTilesFound ?? [])];
-    if (specialTypes.includes(data.tileState as string)) {
+    if ((SPECIAL_PICKUP_TYPES as readonly string[]).includes(data.tileState as string)) {
       newSpecialsFound.push({ type: data.tileState as SpecialTileStat['type'], index });
-      log.info(`revealTile: special tile triggered \u2014 ${data.tileState}`, {
+      log.info(`revealTile: special tile picked up \u2014 ${data.tileState}`, {
         tile: index,
         message: data.message,
         multiplier: sessionUpdate?.currentMultiplier,
