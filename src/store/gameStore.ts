@@ -1,8 +1,7 @@
 import { create } from 'zustand';
-import { GamePhase, GameSession, GridSize, RiskPreset, TileState } from '@/lib/types';
+import { GamePhase, GameSession, GridSize, RiskPreset, SpecialTileStat, TileState } from '@/lib/types';
 
 interface GameStore {
-  // Current session
   session: GameSession | null;
   phase: GamePhase;
   tiles: TileState[];
@@ -13,8 +12,8 @@ interface GameStore {
   streak: number;
   lastMessage: string;
   autoCashout: number | null;
+  provenSeed: string | null;
 
-  // Actions
   setGridSize: (size: GridSize) => void;
   setMineCount: (count: number) => void;
   setBet: (amount: number) => void;
@@ -37,6 +36,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   streak: 0,
   lastMessage: '',
   autoCashout: null,
+  provenSeed: null,
 
   setGridSize: (size) => set({ gridSize: size }),
   setMineCount: (count) => set({ mineCount: count }),
@@ -53,19 +53,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
     const data = await res.json();
     if (!res.ok) return;
-
     set({
-      session: data.session,
+      session: { ...data.session, specialTilesFound: [] },
       phase: 'active',
-      tiles: Array(gridSize).fill('hidden'),
+      tiles: Array(gridSize).fill('hidden') as TileState[],
       lastMessage: '',
+      provenSeed: null,
     });
   },
 
   revealTile: async (index) => {
     const { session, tiles, autoCashout } = get();
     if (!session || tiles[index] !== 'hidden') return;
-
     const res = await fetch('/api/game/reveal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -74,30 +73,30 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const data = await res.json();
     if (!res.ok) return;
 
-    const newTiles = [...tiles];
+    const newTiles = [...tiles] as TileState[];
     newTiles[index] = data.tileState as TileState;
 
     if (data.phase === 'lost') {
-      // Reveal all mine positions
-      data.minePositions?.forEach((i: number) => {
-        if (newTiles[i] === 'hidden') newTiles[i] = 'mine';
-      });
-      set({ tiles: newTiles, phase: 'lost', lastMessage: '💥 Mine hit!', streak: 0 });
-    } else {
-      const updatedSession = { ...session, ...data.sessionUpdate };
-      set({ tiles: newTiles, session: updatedSession, lastMessage: data.message ?? '' });
-
-      // Auto cashout check
-      if (autoCashout && updatedSession.currentMultiplier >= autoCashout) {
-        get().cashOut();
-      }
+      (data.minePositions as number[])?.forEach((i) => { if (newTiles[i] === 'hidden') newTiles[i] = 'mine'; });
+      set({ tiles: newTiles, phase: 'lost', lastMessage: '💥 Mine hit! Streak reset.', streak: 0 });
+      return;
     }
+
+    const specialTypes = ['gold', 'shield', 'booster', 'defuse', 'mystery'];
+    const newSpecialsFound: SpecialTileStat[] = [...(session.specialTilesFound ?? [])];
+    if (specialTypes.includes(data.tileState)) {
+      newSpecialsFound.push({ type: data.tileState as SpecialTileStat['type'], index });
+    }
+
+    const updatedSession: GameSession = { ...session, ...data.sessionUpdate, specialTilesFound: newSpecialsFound };
+    set({ tiles: newTiles, session: updatedSession, lastMessage: data.message ?? '' });
+
+    if (autoCashout && updatedSession.currentMultiplier >= autoCashout) get().cashOut();
   },
 
   cashOut: async () => {
-    const { session, streak } = get();
+    const { session, streak, tiles } = get();
     if (!session) return;
-
     const res = await fetch('/api/game/cashout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -106,15 +105,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const data = await res.json();
     if (!res.ok) return;
 
+    // Reveal all mines with a distinct 'mine-revealed' style after cashout
+    const newTiles = [...tiles] as TileState[];
+    (data.minePositions as number[])?.forEach((i) => { if (newTiles[i] === 'hidden') newTiles[i] = 'mine-revealed'; });
+
     set({
       phase: 'won',
+      tiles: newTiles,
       session: { ...session, winnings: data.winnings },
       streak: streak + 1,
-      lastMessage: `✅ Cashed out at ${data.multiplier.toFixed(3)}× — won ${data.winnings.toFixed(2)}`,
+      lastMessage: `✅ Cashed out at ${(data.multiplier as number).toFixed(3)}x — won ${(data.winnings as number).toFixed(2)}`,
+      provenSeed: data.serverSeed ?? null,
     });
   },
 
-  resetGame: () => {
-    set({ session: null, phase: 'idle', tiles: [], lastMessage: '' });
-  },
+  resetGame: () => set({ session: null, phase: 'idle', tiles: [], lastMessage: '', provenSeed: null }),
 }));
