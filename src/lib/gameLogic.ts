@@ -50,19 +50,78 @@ export interface SpecialTile {
 }
 
 /**
+ * Compute the shield spawn probability for a given mine count.
+ *
+ * The shield's EV advantage is proportional to the probability of hitting the
+ * single mine it can absorb. With very few mines the shield is worth a huge
+ * fraction of the board's expected value, so we suppress it entirely at low
+ * counts and ramp up linearly to the standard 4% above the threshold.
+ *
+ *   mines <= 3  → 0%   (shield suppressed — loophole fix)
+ *   mines == 4  → 1%
+ *   mines == 5  → 2%
+ *   mines == 6  → 3%
+ *   mines >= 7  → 4%   (full probability)
+ */
+export function shieldSpawnProb(mineCount: number): number {
+  if (mineCount <= 3) return 0;
+  if (mineCount >= 7) return 0.04;
+  // linear ramp: 1% per extra mine above 3
+  return (mineCount - 3) * 0.01;
+}
+
+/**
+ * Compute the multiplier retention factor when a shield absorbs a mine.
+ *
+ * With few mines the shield saves a disproportionately large EV, so the
+ * penalty must be larger to compensate. We tie the penalty to mine density
+ * (mines / total tiles):
+ *
+ *   density >= 0.30 → retain 85%  (light penalty, high-risk game)
+ *   density <= 0.04 → retain 40%  (heavy penalty, low-risk game)
+ *
+ * Linear interpolation between those two anchors.
+ */
+export function shieldPenaltyFactor(mineCount: number, gridSize: number): number {
+  const density = mineCount / gridSize;
+  const MIN_DENSITY = 0.04;  // 1 mine on 25 tiles
+  const MAX_DENSITY = 0.30;
+  const MIN_RETAIN  = 0.40;  // heavy penalty at low density
+  const MAX_RETAIN  = 0.85;  // light penalty at high density
+
+  const clamped = Math.min(Math.max(density, MIN_DENSITY), MAX_DENSITY);
+  const t = (clamped - MIN_DENSITY) / (MAX_DENSITY - MIN_DENSITY);
+  return MIN_RETAIN + t * (MAX_RETAIN - MIN_RETAIN);
+}
+
+/**
  * Spawn probabilities per safe tile:
- *   gold: 8%, shield: 4%, booster: 6%, defuse: 3%, mystery: 3%
+ *   gold:    8%
+ *   shield:  0–4%  (scales with mine count — see shieldSpawnProb)
+ *   booster: 6%
+ *   defuse:  3%
+ *   mystery: 3%
+ *
+ * At 1-3 mines shield probability is 0, protecting the house edge.
  */
 export function generateSpecialTiles(
   total: number,
   minePositions: number[],
   serverSeed: string
 ): SpecialTile[] {
+  const mineCount = minePositions.length;
   const mineSet = new Set(minePositions);
   const safeTiles = Array.from({ length: total }, (_, i) => i).filter(i => !mineSet.has(i));
   const specials: SpecialTile[] = [];
+
   const types: SpecialTileType[] = ['gold', 'shield', 'booster', 'defuse', 'mystery'];
-  const probs = [0.08, 0.04, 0.06, 0.03, 0.03];
+  const probs = [
+    0.08,                          // gold
+    shieldSpawnProb(mineCount),    // shield — dynamically scaled
+    0.06,                          // booster
+    0.03,                          // defuse
+    0.03,                          // mystery
+  ];
 
   safeTiles.forEach((tileIndex, i) => {
     const hash = crypto.createHmac('sha256', serverSeed).update(`special:${tileIndex}:${i}`).digest('hex');
@@ -83,28 +142,31 @@ export function applySpecialTileEffect(
 ): { multiplier: number; message: string; newMinePositions: number[] } {
   switch (tileType) {
     case 'gold':
-      return { multiplier: baseMultiplier * 2, message: '🥇 Gold tile! 2x multiplier boost!', newMinePositions: currentMinePositions };
+      return { multiplier: baseMultiplier * 2, message: '\ud83e\udd47 Gold tile! 2x multiplier boost!', newMinePositions: currentMinePositions };
     case 'shield':
-      return { multiplier: baseMultiplier, message: '🛡️ Shield activated! You can survive one mine hit.', newMinePositions: currentMinePositions };
+      // Shield activation cost is zero here — the multiplier penalty is applied
+      // in the reveal route when the shield actually fires (absorbs a mine hit),
+      // using shieldPenaltyFactor() which accounts for mine density.
+      return { multiplier: baseMultiplier, message: '\ud83d\udee1\ufe0f Shield activated! You can survive one mine hit.', newMinePositions: currentMinePositions };
     case 'booster':
-      return { multiplier: baseMultiplier * 1.25, message: '🚀 Booster! +25% multiplier!', newMinePositions: currentMinePositions };
+      return { multiplier: baseMultiplier * 1.25, message: '\ud83d\ude80 Booster! +25% multiplier!', newMinePositions: currentMinePositions };
     case 'defuse': {
       if (currentMinePositions.length === 0) {
-        return { multiplier: baseMultiplier, message: '✂️ Defuser - no mines left to defuse!', newMinePositions: currentMinePositions };
+        return { multiplier: baseMultiplier, message: '\u2702\ufe0f Defuser - no mines left to defuse!', newMinePositions: currentMinePositions };
       }
       const removeIdx = Math.floor(Math.random() * currentMinePositions.length);
       const newMines = currentMinePositions.filter((_, i) => i !== removeIdx);
       return {
         multiplier: baseMultiplier,
-        message: `✂️ Defuser! One mine neutralised. ${newMines.length} mine${newMines.length !== 1 ? 's' : ''} remaining.`,
+        message: `\u2702\ufe0f Defuser! One mine neutralised. ${newMines.length} mine${newMines.length !== 1 ? 's' : ''} remaining.`,
         newMinePositions: newMines,
       };
     }
     case 'mystery': {
       const roll = Math.random();
-      if (roll < 0.10) return { multiplier: baseMultiplier * 1.5, message: '🎁 Mystery: Lucky! +50% bonus!', newMinePositions: currentMinePositions };
-      if (roll < 0.40) return { multiplier: baseMultiplier, message: '🎁 Mystery: Nothing happened.', newMinePositions: currentMinePositions };
-      return { multiplier: baseMultiplier * 0.85, message: '🎁 Mystery: Ouch. -15% penalty.', newMinePositions: currentMinePositions };
+      if (roll < 0.10) return { multiplier: baseMultiplier * 1.5, message: '\ud83c\udf81 Mystery: Lucky! +50% bonus!', newMinePositions: currentMinePositions };
+      if (roll < 0.40) return { multiplier: baseMultiplier, message: '\ud83c\udf81 Mystery: Nothing happened.', newMinePositions: currentMinePositions };
+      return { multiplier: baseMultiplier * 0.85, message: '\ud83c\udf81 Mystery: Ouch. -15% penalty.', newMinePositions: currentMinePositions };
     }
     default:
       return { multiplier: baseMultiplier, message: '', newMinePositions: currentMinePositions };
