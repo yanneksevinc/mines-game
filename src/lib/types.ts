@@ -15,7 +15,30 @@ export const RISK_PRESETS: Record<RiskPreset, (gridSize: GridSize) => RiskConfig
   custom:   (_) => ({ label: 'Custom',   mines: 3, description: 'Set mine count manually' }),
 };
 
-export type TileState = 'hidden' | 'safe' | 'mine' | 'mine-revealed' | 'gold' | 'shield' | 'booster' | 'defuse' | 'mystery';
+/**
+ * TileState values:
+ *   hidden         – not yet revealed
+ *   safe           – plain safe tile
+ *   mine           – mine that was hit (game-losing)
+ *   mine-revealed  – mine shown after a successful cashout
+ *   gold           – special: gold tile pickup
+ *   shield         – special: shield tile pickup (grants the buff)
+ *   shield-blocked – the shield BUFF fired and absorbed a mine hit (NOT a tile pickup)
+ *   booster        – special: booster tile pickup
+ *   defuse         – special: defuser tile pickup
+ *   mystery        – special: mystery tile pickup
+ */
+export type TileState =
+  | 'hidden'
+  | 'safe'
+  | 'mine'
+  | 'mine-revealed'
+  | 'gold'
+  | 'shield'
+  | 'shield-blocked'
+  | 'booster'
+  | 'defuse'
+  | 'mystery';
 
 export type GamePhase = 'idle' | 'active' | 'won' | 'lost';
 
