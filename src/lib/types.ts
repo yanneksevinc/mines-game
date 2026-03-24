@@ -1,4 +1,4 @@
-export type GridSize = 9 | 25 | 49 | 100; // 3×3, 5×5, 7×7, 10×10
+export type GridSize = 9 | 25 | 49 | 100;
 
 export type RiskPreset = 'safe' | 'balanced' | 'chaos' | 'custom';
 
@@ -9,15 +9,20 @@ export interface RiskConfig {
 }
 
 export const RISK_PRESETS: Record<RiskPreset, (gridSize: GridSize) => RiskConfig> = {
-  safe:     (g) => ({ label: '🟢 Safe',     mines: Math.max(1, Math.floor(Math.sqrt(g) * 0.5)), description: 'Few mines, lower multipliers' }),
-  balanced: (g) => ({ label: '🟡 Balanced', mines: Math.max(2, Math.floor(Math.sqrt(g) * 1.0)), description: 'Standard risk/reward' }),
-  chaos:    (g) => ({ label: '🔴 Chaos',    mines: Math.max(3, Math.floor(Math.sqrt(g) * 2.0)), description: 'Many mines, huge multipliers' }),
-  custom:   (_) => ({ label: '⚙️ Custom',   mines: 3, description: 'Set mine count manually' }),
+  safe:     (g) => ({ label: 'Safe',     mines: Math.max(1, Math.floor(Math.sqrt(g) * 0.5)), description: 'Few mines, lower multipliers' }),
+  balanced: (g) => ({ label: 'Balanced', mines: Math.max(2, Math.floor(Math.sqrt(g) * 1.0)), description: 'Standard risk/reward' }),
+  chaos:    (g) => ({ label: 'Chaos',    mines: Math.max(3, Math.floor(Math.sqrt(g) * 2.0)), description: 'Many mines, huge multipliers' }),
+  custom:   (_) => ({ label: 'Custom',   mines: 3, description: 'Set mine count manually' }),
 };
 
-export type TileState = 'hidden' | 'safe' | 'mine' | 'gold' | 'shield' | 'booster' | 'mystery';
+export type TileState = 'hidden' | 'safe' | 'mine' | 'mine-revealed' | 'gold' | 'shield' | 'booster' | 'defuse' | 'mystery';
 
 export type GamePhase = 'idle' | 'active' | 'won' | 'lost';
+
+export interface SpecialTileStat {
+  type: 'gold' | 'shield' | 'booster' | 'defuse' | 'mystery';
+  index: number;
+}
 
 export interface GameSession {
   id: string;
@@ -32,4 +37,16 @@ export interface GameSession {
   currentMultiplier: number;
   shieldActive: boolean;
   winnings: number;
+  specialTilesFound: SpecialTileStat[];
 }
+
+export const SPECIAL_TILE_META: Record<
+  'gold' | 'shield' | 'booster' | 'defuse' | 'mystery',
+  { icon: string; label: string; color: string; description: string }
+> = {
+  gold:    { icon: '🥇', label: 'Gold',    color: 'text-yellow-400',  description: '2x multiplier boost' },
+  shield:  { icon: '🛡️', label: 'Shield',  color: 'text-blue-400',   description: 'Absorbs 1 mine hit (-15% multiplier)' },
+  booster: { icon: '🚀', label: 'Booster', color: 'text-purple-400', description: '+25% multiplier boost' },
+  defuse:  { icon: '✂️', label: 'Defuser', color: 'text-cyan-400',   description: 'Neutralises 1 mine permanently' },
+  mystery: { icon: '🎁', label: 'Mystery', color: 'text-pink-400',   description: 'Random: big win, nothing, or penalty' },
+};
