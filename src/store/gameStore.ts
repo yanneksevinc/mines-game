@@ -71,7 +71,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       gridSize,
       mineCount,
       bet,
-      houseEdge: newSession.houseEdge,
+      serverSeedHash: newSession.serverSeedHash,
     });
 
     set({
@@ -124,7 +124,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         hitTile: index,
         minePositions: data.minePositions,
       });
-      set({ tiles: newTiles, phase: 'lost', lastMessage: '💥 Mine hit! Streak reset.', streak: 0 });
+      set({ tiles: newTiles, phase: 'lost', lastMessage: '\ud83d\udca5 Mine hit! Streak reset.', streak: 0 });
       return;
     }
 
@@ -132,7 +132,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const newSpecialsFound: SpecialTileStat[] = [...(session.specialTilesFound ?? [])];
     if (specialTypes.includes(data.tileState as string)) {
       newSpecialsFound.push({ type: data.tileState as SpecialTileStat['type'], index });
-      log.info(`revealTile: special tile triggered — ${data.tileState}`, {
+      log.info(`revealTile: special tile triggered \u2014 ${data.tileState}`, {
         tile: index,
         message: data.message,
         multiplier: sessionUpdate?.currentMultiplier,
@@ -199,7 +199,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       tiles: newTiles,
       session: { ...session, winnings },
       streak: streak + 1,
-      lastMessage: `✅ Cashed out at ${multiplier.toFixed(3)}x — won ${winnings.toFixed(2)}`,
+      lastMessage: `\u2705 Cashed out at ${multiplier.toFixed(3)}x \u2014 won ${winnings.toFixed(2)}`,
       provenSeed: (data.serverSeed as string) ?? null,
     });
   },
