@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getMultiplier, applySpecialTileEffect, shieldPenaltyFactor, SpecialTile } from '@/lib/gameLogic';
+import { getMultiplier, applySpecialTileEffect, clampMultiplierToRTP, shieldPenaltyFactor, SpecialTile } from '@/lib/gameLogic';
 import { createServiceClient } from '@/lib/supabase';
 
 export async function POST(req: NextRequest) {
@@ -22,18 +22,26 @@ export async function POST(req: NextRequest) {
         //      high mine count (30% density)  -> retain 85% of multiplier
         const retainFactor = shieldPenaltyFactor(session.mine_count, session.grid_size);
         const penalisedMultiplier = session.current_multiplier * retainFactor;
+        // Shield can only reduce the multiplier, but clamp for completeness and
+        // to guard against any future code paths that could inflate it here.
+        const clampedPenalisedMultiplier = clampMultiplierToRTP(
+          penalisedMultiplier,
+          session.grid_size,
+          session.mine_count,
+          session.revealed_safe,
+        );
         const penaltyPct = Math.round((1 - retainFactor) * 100);
 
         await supabase.from('game_sessions').update({
           shield_active: false,
-          current_multiplier: penalisedMultiplier,
+          current_multiplier: clampedPenalisedMultiplier,
         }).eq('id', sessionId);
 
         return NextResponse.json({
           phase: 'active',
           tileState: 'shield',
           message: `\ud83d\udee1\ufe0f Shield blocked the mine! (-${penaltyPct}% multiplier penalty)`,
-          sessionUpdate: { shieldActive: false, currentMultiplier: penalisedMultiplier },
+          sessionUpdate: { shieldActive: false, currentMultiplier: clampedPenalisedMultiplier },
         });
       }
 
@@ -43,12 +51,23 @@ export async function POST(req: NextRequest) {
 
     const newRevealedSafe = session.revealed_safe + 1;
     const rawMultiplier = getMultiplier(session.grid_size, session.mine_count, newRevealedSafe, session.house_edge);
+
+    // applySpecialTileEffect can boost the multiplier (gold \xd72, booster \xd71.25, mystery \xd71.5).
+    // Without clamping, those boosts produce RTP >> 99%.
+    // Always clamp against session.mine_count (original), NOT newMinePositions.length, so that
+    // a Defuser tile cannot widen the RTP envelope by reducing the apparent mine count.
     const { multiplier: adjustedMultiplier, message, newMinePositions } = applySpecialTileEffect(rawMultiplier, special?.type ?? null, minePositions);
+    const clampedMultiplier = clampMultiplierToRTP(
+      adjustedMultiplier,
+      session.grid_size,
+      session.mine_count,   // original mine count — intentional, see above
+      newRevealedSafe,
+    );
     const newShieldActive = special?.type === 'shield' ? true : session.shield_active;
 
     await supabase.from('game_sessions').update({
       revealed_safe: newRevealedSafe,
-      current_multiplier: adjustedMultiplier,
+      current_multiplier: clampedMultiplier,
       shield_active: newShieldActive,
       mine_positions: newMinePositions,
     }).eq('id', sessionId);
@@ -63,7 +82,7 @@ export async function POST(req: NextRequest) {
       message,
       sessionUpdate: {
         revealedSafe: newRevealedSafe,
-        currentMultiplier: adjustedMultiplier,
+        currentMultiplier: clampedMultiplier,
         shieldActive: newShieldActive,
         mineCount: newMinePositions.length,
       },
