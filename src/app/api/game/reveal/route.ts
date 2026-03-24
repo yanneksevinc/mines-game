@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getMultiplier, applySpecialTileEffect, SpecialTile } from '@/lib/gameLogic';
+import { getMultiplier, applySpecialTileEffect, shieldPenaltyFactor, SpecialTile } from '@/lib/gameLogic';
 import { createServiceClient } from '@/lib/supabase';
 
 export async function POST(req: NextRequest) {
@@ -17,14 +17,26 @@ export async function POST(req: NextRequest) {
 
     if (isMine) {
       if (session.shield_active) {
-        const penalisedMultiplier = session.current_multiplier * 0.85;
-        await supabase.from('game_sessions').update({ shield_active: false, current_multiplier: penalisedMultiplier }).eq('id', sessionId);
+        // Penalty scales with mine density: fewer mines = shield was worth more = bigger cut.
+        // e.g. 1 mine / 25 tiles (4% density) -> retain 40% of multiplier
+        //      high mine count (30% density)  -> retain 85% of multiplier
+        const retainFactor = shieldPenaltyFactor(session.mine_count, session.grid_size);
+        const penalisedMultiplier = session.current_multiplier * retainFactor;
+        const penaltyPct = Math.round((1 - retainFactor) * 100);
+
+        await supabase.from('game_sessions').update({
+          shield_active: false,
+          current_multiplier: penalisedMultiplier,
+        }).eq('id', sessionId);
+
         return NextResponse.json({
-          phase: 'active', tileState: 'shield',
-          message: '🛡️ Shield blocked the mine! (x0.85 penalty)',
+          phase: 'active',
+          tileState: 'shield',
+          message: `\ud83d\udee1\ufe0f Shield blocked the mine! (-${penaltyPct}% multiplier penalty)`,
           sessionUpdate: { shieldActive: false, currentMultiplier: penalisedMultiplier },
         });
       }
+
       await supabase.from('game_sessions').update({ status: 'lost' }).eq('id', sessionId);
       return NextResponse.json({ phase: 'lost', tileState: 'mine', minePositions });
     }
