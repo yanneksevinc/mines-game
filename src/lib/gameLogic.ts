@@ -14,6 +14,44 @@ export function getMultiplier(
   return (1 / probability) * (1 - houseEdge);
 }
 
+/**
+ * Maximum RTP the house will ever pay out, expressed as a fraction.
+ * 0.99 = 99%. Any multiplier that would produce RTP > this is clamped down.
+ */
+export const MAX_RTP = 0.99;
+
+/**
+ * Hard ceiling on the multiplier for a given game state.
+ *
+ * Derivation:
+ *   RTP = P(survive_to_step) × multiplier
+ *   P(survive_to_step) = 1 / getMultiplier(total, mines, revealedSafe, 0)
+ *   Therefore: maxMultiplier = MAX_RTP / P(survive_to_step)
+ *                            = getMultiplier(total, mines, revealedSafe, 1 - MAX_RTP)
+ *
+ * Any combination of special tile boosts (gold ×2, booster ×1.25, mystery ×1.5,
+ * shield survival, etc.) that would push the live multiplier above this value
+ * is silently clamped to the ceiling before being written to the database.
+ *
+ * The ceiling is always computed against the ORIGINAL mine count for the session
+ * (not a post-defuse count), so a defuser tile cannot inflate the RTP envelope.
+ *
+ * @param multiplier  Proposed multiplier after special tile effects
+ * @param total       Grid size (e.g. 25)
+ * @param mines       Original mine count for the session (session.mine_count)
+ * @param revealedSafe Number of safe tiles revealed so far in this step
+ */
+export function clampMultiplierToRTP(
+  multiplier: number,
+  total: number,
+  mines: number,
+  revealedSafe: number
+): number {
+  if (revealedSafe === 0) return Math.min(multiplier, MAX_RTP);
+  const ceiling = getMultiplier(total, mines, revealedSafe, 1 - MAX_RTP);
+  return Math.min(multiplier, ceiling);
+}
+
 export function generateServerSeed(): string {
   return crypto.randomBytes(32).toString('hex');
 }
@@ -66,7 +104,6 @@ export interface SpecialTile {
 export function shieldSpawnProb(mineCount: number): number {
   if (mineCount <= 3) return 0;
   if (mineCount >= 7) return 0.04;
-  // linear ramp: 1% per extra mine above 3
   return (mineCount - 3) * 0.01;
 }
 
@@ -84,10 +121,10 @@ export function shieldSpawnProb(mineCount: number): number {
  */
 export function shieldPenaltyFactor(mineCount: number, gridSize: number): number {
   const density = mineCount / gridSize;
-  const MIN_DENSITY = 0.04;  // 1 mine on 25 tiles
+  const MIN_DENSITY = 0.04;
   const MAX_DENSITY = 0.30;
-  const MIN_RETAIN  = 0.40;  // heavy penalty at low density
-  const MAX_RETAIN  = 0.85;  // light penalty at high density
+  const MIN_RETAIN  = 0.40;
+  const MAX_RETAIN  = 0.85;
 
   const clamped = Math.min(Math.max(density, MIN_DENSITY), MAX_DENSITY);
   const t = (clamped - MIN_DENSITY) / (MAX_DENSITY - MIN_DENSITY);
@@ -116,11 +153,11 @@ export function generateSpecialTiles(
 
   const types: SpecialTileType[] = ['gold', 'shield', 'booster', 'defuse', 'mystery'];
   const probs = [
-    0.08,                          // gold
-    shieldSpawnProb(mineCount),    // shield — dynamically scaled
-    0.06,                          // booster
-    0.03,                          // defuse
-    0.03,                          // mystery
+    0.08,
+    shieldSpawnProb(mineCount),
+    0.06,
+    0.03,
+    0.03,
   ];
 
   safeTiles.forEach((tileIndex, i) => {
@@ -144,9 +181,6 @@ export function applySpecialTileEffect(
     case 'gold':
       return { multiplier: baseMultiplier * 2, message: '\ud83e\udd47 Gold tile! 2x multiplier boost!', newMinePositions: currentMinePositions };
     case 'shield':
-      // Shield activation cost is zero here — the multiplier penalty is applied
-      // in the reveal route when the shield actually fires (absorbs a mine hit),
-      // using shieldPenaltyFactor() which accounts for mine density.
       return { multiplier: baseMultiplier, message: '\ud83d\udee1\ufe0f Shield activated! You can survive one mine hit.', newMinePositions: currentMinePositions };
     case 'booster':
       return { multiplier: baseMultiplier * 1.25, message: '\ud83d\ude80 Booster! +25% multiplier!', newMinePositions: currentMinePositions };
